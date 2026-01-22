@@ -1,6 +1,7 @@
 streamlit
-pytesseract
-pdf2image
-pillow
 pandas
+pytesseract
+pdfplumber
 python-dateutil
+Pillow
+
