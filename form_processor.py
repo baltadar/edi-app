@@ -7,9 +7,9 @@ from pathlib import Path
 import shutil
 
 import streamlit as st
-import pytesseract
-from pdf2image import convert_from_path
+import pdfplumber
 from PIL import Image
+import pytesseract
 import pandas as pd
 from dateutil import parser as date_parser
 
@@ -17,7 +17,7 @@ from dateutil import parser as date_parser
 # CONFIGURATION
 # ==============================
 
-BASE_FOLDER = Path("/home/appuser/Documents")  # Streamlit Cloud writable folder
+BASE_FOLDER = Path("/home/appuser/Documents")
 WATCH_FOLDER = BASE_FOLDER / "incoming_forms"
 OUTPUT_FOLDER = BASE_FOLDER / "processed_output"
 LOG_FOLDER = BASE_FOLDER / "logs"
@@ -49,11 +49,15 @@ logging.basicConfig(
 def extract_text_from_image(image: Image.Image) -> str:
     return pytesseract.image_to_string(image)
 
-def extract_text_from_pdf(pdf_path: str) -> str:
-    pages = convert_from_path(pdf_path)
+def extract_text_from_pdf(pdf_path: Path) -> str:
+    """Use pdfplumber instead of pdf2image (no Poppler needed)."""
     full_text = ""
-    for page in pages:
-        full_text += extract_text_from_image(page) + "\n"
+    try:
+        with pdfplumber.open(str(pdf_path)) as pdf:
+            for page in pdf.pages:
+                full_text += page.extract_text() + "\n"
+    except Exception as e:
+        logging.error(f"Failed to read PDF {pdf_path.name}: {e}")
     return full_text
 
 # ==============================
@@ -107,6 +111,7 @@ def validate_fields(fields: dict) -> list:
 
 def save_outputs(fields: dict, base_filename: str, confidence: float):
     timestamp = datetime.utcnow().isoformat()
+    OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
     output_data = {
         "extracted_fields": fields,
@@ -127,13 +132,12 @@ def save_outputs(fields: dict, base_filename: str, confidence: float):
     logging.info(f"Saved outputs for {base_filename} with confidence {confidence}%")
 
 # ==============================
-# EXCEPTION HANDLING (CROSS-FILESYSTEM SAFE)
+# EXCEPTION HANDLING
 # ==============================
 
 def move_to_exceptions(file_path: Path, errors: list):
+    EXCEPTIONS_FOLDER.mkdir(parents=True, exist_ok=True)
     target = EXCEPTIONS_FOLDER / file_path.name
-
-    # Copy + delete for cross-filesystem safety
     shutil.copy2(file_path, target)
     file_path.unlink()
 
@@ -149,7 +153,7 @@ def move_to_exceptions(file_path: Path, errors: list):
     logging.warning(f"Moved {file_path.name} to exceptions: {errors}")
 
 # ==============================
-# PROCESS SINGLE FILE
+# PROCESS FILE
 # ==============================
 
 def process_file(file_path: Path):
@@ -158,7 +162,7 @@ def process_file(file_path: Path):
 
     try:
         if file_path.suffix.lower() == ".pdf":
-            text = extract_text_from_pdf(str(file_path))
+            text = extract_text_from_pdf(file_path)
         else:
             image = Image.open(file_path)
             text = extract_text_from_image(image)
@@ -184,7 +188,7 @@ def process_file(file_path: Path):
 # ==============================
 
 st.title("EDI Form Processor")
-st.write("Upload PDF or image files of forms to extract data automatically.")
+st.write("Upload PDF or image forms to extract data automatically.")
 
 uploaded_files = st.file_uploader(
     "Choose files",
@@ -199,4 +203,4 @@ if uploaded_files:
             f.write(uploaded_file.getbuffer())
         process_file(temp_path)
 
-st.write("✅ All done! Check processed_output and exceptions folders in the app's filesystem.")
+st.write("✅ Done! Check processed_output and exceptions folders.")
